@@ -4,6 +4,7 @@ int hitMatrix(void) ;
 void vt100_conout(char ch) ;
 
 #define ST77XX_GREY 0xc618
+// #define ST77XX_RED  0xCE60
 
 #define TAB       0x9
 #define BKSP      0x8

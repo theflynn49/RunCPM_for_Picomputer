@@ -28,27 +28,16 @@ uint8 prompt[8] = "\r\n  >";
 uint16 pbuf, perr;
 uint8 blen = 0;                 // Actual size of the typed command line (size of the buffer)
 
-static const char *Commands[] =
-{
-#ifdef Internals
-    // Standard CP/M commands
-    "DIR",
-    "ERA",
-    "TYPE",
-    "SAVE",
-    "REN",
-    "USER",
-    
-    // Extra CCP commands
-    "CLS",
-    "DEL",
-    "EXIT",
-    "PAGE",
-#endif
-    "VOL",
-    "?",
-    NULL
-};
+typedef struct {
+    const char* name;
+    uint8 (*handler)(void);
+} Command;
+
+// Used to call BIOS from inside the CCP
+void _ccp_bios(uint8 function) {
+    SET_LOW_REGISTER(PCX, function);
+    _Bios();
+} // _ccp_bios
 
 // Used to call BDOS from inside the CCP
 uint16 _ccp_bdos(uint8 function, uint16 de) {
@@ -60,42 +49,13 @@ uint16 _ccp_bdos(uint8 function, uint16 de) {
 } // _ccp_bdos
 
 // Compares two strings (Atmel doesn't like strcmp)
-uint8 _ccp_strcmp(char *stra, char *strb) {
+uint8 _ccp_strcmp(const char *stra, const char *strb) {
     while (*stra && *strb && (*stra == *strb)) {
         ++stra;
         ++strb;
     }
     return (*stra == *strb);
 } // _ccp_strcmp
-
-// Gets the command ID number
-uint8 _ccp_cnum(void) {
-    uint8 result = 255;
-    uint8 command[9];
-    uint8 i = 0;
-
-    if (!_RamRead(CmdFCB)) {    // If a drive was set, then the command is external
-        while (i < 8 && _RamRead(CmdFCB + i + 1) != ' ') {
-            command[i] = _RamRead(CmdFCB + i + 1);
-            ++i;
-        }
-        command[i] = 0;
-        i = 0;
-        while (Commands[i]) {
-            if (_ccp_strcmp((char *)command, (char *)Commands[i])) {
-                result = i;
-                perr = defDMA + 2;
-                break;
-            }
-            ++i;
-        }
-    }
-#ifndef Internals
-    if (result != 255)
-        result += 10;
-#endif
-    return (result);
-} // _ccp_cnum
 
 // Returns true if character is a delimiter
 uint8 _ccp_delim(uint8 ch) {
@@ -218,7 +178,7 @@ uint16 _ccp_fcbtonum() {
 
 #ifdef Internals
 // DIR command
-void _ccp_dir(void) {
+uint8 _ccp_dir(void) {
     uint8 i;
     uint8 dirHead[6] = "A: ";
     uint8 dirSep[6] = "  |  ";
@@ -250,18 +210,127 @@ void _ccp_dir(void) {
     } else {
         _puts("No file");
     }
+    return 0;
 } // _ccp_dir
 
+// LDIR command (Long DIR)
+uint8 _ccp_ldir(void) {
+    uint8 checksumOption = 0;
+    uint8 l = 0;
+    
+    // Check for /C option in ParFCB or SecFCB
+    if ((_RamRead(ParFCB + 1) == '/' && _RamRead(ParFCB + 2) == 'C') ||
+        (_RamRead(SecFCB + 1) == '/' && _RamRead(SecFCB + 2) == 'C')) {
+        checksumOption = 1;
+    }
+    
+    // If ParFCB has /C, set it to list all files
+    if (_RamRead(ParFCB + 1) == '/' && _RamRead(ParFCB + 2) == 'C') {
+        for (uint8 i = 1; i < 12; ++i)
+            _RamWrite(ParFCB + i, '?');
+    } else if (_RamRead(ParFCB + 1) == ' ') {
+        // If no pattern specified, list all files
+        for (uint8 i = 1; i < 12; ++i)
+            _RamWrite(ParFCB + i, '?');
+    }
+    
+    _puts("\r\n");
+    if (!_SearchFirst(ParFCB, TRUE)) {
+        do {
+            _ccp_printfcb(tmpFCB, TRUE);
+            // Calculate length of printed filename for alignment
+            uint8 len = 2; // drive:
+            for (uint8 i = 1; i <= 8; ++i) {
+                uint8 ch = _RamRead(tmpFCB + i);
+                if (ch != ' ') len++;
+                else break;
+            }
+            len++; // .
+            for (uint8 i = 9; i <= 11; ++i) {
+                uint8 ch = _RamRead(tmpFCB + i);
+                if (ch != ' ') len++;
+                else break;
+            }
+            // Align to column 20
+            uint8 target = 20;
+            while (len < target) {
+                _ccp_bdos(C_WRITE, ' ');
+                len++;
+            }
+            // Get file size
+            long fsize = _FileSize(tmpFCB);
+            uint32 size = (fsize == -1) ? 0 : (uint32)fsize;
+            // Print size in bytes, padded to 7 digits
+            if (size == 0) {
+                _puts("      0");
+            } else {
+                uint32 temp = size;
+                char buf[12];
+                uint8 idx = 0;
+                while (temp > 0) {
+                    buf[idx++] = '0' + (temp % 10);
+                    temp /= 10;
+                }
+                // Pad with spaces to 7 digits
+                uint8 digits = idx;
+                uint8 padding = 7 - digits;
+                while (padding > 0) {
+                    _ccp_bdos(C_WRITE, ' ');
+                    padding--;
+                }
+                // Print the digits
+                while (idx > 0) {
+                    _ccp_bdos(C_WRITE, buf[--idx]);
+                }
+            }
+            _puts(" bytes");
+            
+            if (checksumOption) {
+                // Compute checksum
+                uint16 checksum = 0;
+                CPM_FCB* F = (CPM_FCB*)_RamSysAddr(tmpFCB);
+                F->ex = 0;
+                F->cr = 0;
+                if (!_ccp_bdos(F_OPEN, tmpFCB)) {
+                    while (!_ccp_bdos(F_READ, tmpFCB)) {
+                        for (uint8 i = 0; i < 128; ++i) {
+                            checksum += _RamRead(dmaAddr + i);
+                        }
+                    }
+                    _ccp_bdos(F_CLOSE, tmpFCB);
+                }
+                // Print checksum as 4 hex digits
+                char cbuf[8];
+                sprintf(cbuf, "  %04Xh", checksum);
+                _puts(cbuf);
+            }
+            
+            _puts("\r\n");
+            l++;
+            if (pgSize && (l == pgSize)) {
+                l = 0;
+                _ccp_bios(B_CONIN);
+                if (HIGH_REGISTER(AF) == 3)
+                    break;
+            }
+        } while (!_SearchNext(ParFCB, TRUE));
+    } else {
+        _puts("No file");
+    }
+    return 0;
+} // _ccp_ldir
+
 // ERA command
-void _ccp_era(void) {
+uint8 _ccp_era(void) {
     if (_ccp_bdos(F_DELETE, ParFCB))
         _puts("\r\nNo file");
+    return 0;
 } // _ccp_era
 
 // TYPE command
-void _ccp_type(void) {
-    uint8 i, c, l = 0;
-    uint16 a, p = 0;
+uint8 _ccp_type(void) {
+    uint8 i, c, l = 0, p = 0;
+    uint16 a = 0;
     
     _puts("\r\n");
     if (!_ccp_bdos(F_OPEN, ParFCB)) {
@@ -279,7 +348,8 @@ void _ccp_type(void) {
                     ++l;
                     if (pgSize && (l == pgSize)) {
                         l = 0;
-                        p = _ccp_bdos(C_READ, 0x0000);
+                        _ccp_bios(B_CONIN);
+                        p = HIGH_REGISTER(AF);
                         if (p == 3)
                             break;
                     }
@@ -293,6 +363,7 @@ void _ccp_type(void) {
     } else {
         _puts("No file");
     }
+    return 0;
 } // _ccp_type
 
 // SAVE command
@@ -301,7 +372,7 @@ uint8 _ccp_save(void) {
     uint16 pages = _ccp_fcbtonum();
     uint16 i, dma;
     
-    if (pages < 256) {
+    if (pages > 0 && pages < 256) {
         error = FALSE;
         
         while (_RamRead(pbuf) == ' ' && blen) {     // Skips any leading spaces
@@ -320,10 +391,11 @@ uint8 _ccp_save(void) {
                 dma = defLoad;
                 
                 for (i = 0; i < pages; i++) {
-                    _ccp_bdos(	F_DMAOFF,	dma);
-                    _ccp_bdos(	F_WRITE,	SecFCB);
+                    _ccp_bdos(F_DMAOFF,	dma);
+                    _ccp_bdos(F_WRITE, SecFCB);
                     dma += 128;
-                    _ccp_bdos(	C_WRITE,	'.');
+                    if (i % 2)
+                        _ccp_bdos(C_WRITE, '.');
                 }
                 _ccp_bdos(F_CLOSE, SecFCB);
             }
@@ -333,7 +405,7 @@ uint8 _ccp_save(void) {
 } // _ccp_save
 
 // REN command
-void _ccp_ren(void) {
+uint8 _ccp_ren(void) {
     uint8 ch, i;
     
     ++pbuf;
@@ -348,6 +420,7 @@ void _ccp_ren(void) {
     }
     if (_ccp_bdos(F_RENAME, ParFCB))
         _puts("\r\nNo file");
+    return 0;
 } // _ccp_ren
 
 // USER command
@@ -362,18 +435,158 @@ uint8 _ccp_user(void) {
     return (error);
 } // _ccp_user
 
+// CLS command
+uint8 _ccp_cls(void) {
+    _clrscr();
+    return (FALSE);
+} // _ccp_cls
+
+// EXIT command
+uint8 _ccp_exit(void) {
+    _puts("\r\nTerminating RunCPM.");
+    _puts("\r\nCPU Halted.");
+    Status = STATUS_EXIT;
+    return (FALSE);
+} // _ccp_exit
+
 // PAGE command
 uint8 _ccp_page(void) {
     uint8 error = TRUE;
     uint16 r = _ccp_fcbtonum();
+    char pbuf[6];
     
     if (r < 256) {
         pgSize = (uint8)r;
+        sprintf(pbuf, "%d", pgSize);
+        _puts("\r\nPage size set to ");
+        _puts(pbuf);
+        _puts(" lines");
+        _puts("\r\n");
         error = FALSE;
     }
     return (error);
 } // _ccp_page
-#endif
+#endif // Internals
+
+// VER command
+uint8 _ccp_ver(void) {
+    _puts(CCPHEAD);
+    return(FALSE);
+}
+
+// DUMP command: dump memory or file in hex+ASCII, 128 bytes per screen, stop on ESC
+uint8 _ccp_dump(void) {
+    uint8 param[17];
+    uint8 i = 0, c;
+    uint16 addr = 0;
+    uint8 isHex = 1;
+    uint8 done = 0;
+
+    // Extract parameter from ParFCB (filename or address)
+    for (i = 1; i < 13; ++i) {
+        c = _RamRead(ParFCB + i);
+        if (c == ' ' || c == 0) break;
+        param[i - 1] = c;
+    }
+    param[i - 1] = 0;
+
+    // Check if parameter is exactly 4 hex digits
+    if (i == 5) {
+        for (uint8 j = 0; j < 4; ++j) {
+            c = param[j];
+            if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) {
+                isHex = 0;
+                break;
+            }
+        }
+    } else {
+        isHex = 0;
+    }
+
+    if (isHex) {
+        // Parse hex address
+        addr = 0;
+        for (uint8 j = 0; j < 4; ++j) {
+            c = param[j];
+            addr <<= 4;
+            if (c >= '0' && c <= '9') addr += c - '0';
+            else if (c >= 'A' && c <= 'F') addr += c - 'A' + 10;
+            else if (c >= 'a' && c <= 'f') addr += c - 'a' + 10;
+        }
+        // Dump memory
+        _puts("\r\n");
+        while (!done) {
+            // Print address
+            char abuf[8];
+            sprintf(abuf, "%04X: ", addr);
+            _puts(abuf);
+
+            // Print hex bytes
+            for (i = 0; i < 16; ++i) {
+                uint8 b = _RamRead(addr + i);
+                char hbuf[4];
+                sprintf(hbuf, "%02X ", b);
+                _puts(hbuf);
+            }
+            _puts(" ");
+            // Print ASCII
+            for (i = 0; i < 16; ++i) {
+                uint8 b = _RamRead(addr + i);
+                _ccp_bdos(C_WRITE, (b >= 32 && b < 127) ? b : '.');
+            }
+            _puts("\r\n");
+            addr += 16;
+            if ((addr & 0x7F) == 0) { // Every 128 bytes, pause
+                _puts("-- Press any key, ^C to quit --");
+                if (_ccp_bdos(C_READ, 0) == 3) // ^C
+                    done = 1;
+                _puts("\r\n");
+            }
+        }
+        return 0;
+    } else {
+        // Assume file, try to open
+        if (_ccp_bdos(F_OPEN, ParFCB)) {
+            _puts("\r\nNo file");
+            return 0;
+        }
+        _puts("\r\n");
+        uint32 faddr = 0;
+        done = 0;
+        while (!done) {
+            // Read 128 bytes
+            if (_ccp_bdos(F_READ, ParFCB)) break;
+            // Print 8 lines of 16 bytes
+            for (uint8 l = 0; l < 8; ++l) {
+                // Print file offset
+                char abuf[12];
+                sprintf(abuf, "%06lX: ", (unsigned long)faddr);
+                _puts(abuf);
+                // Print hex
+                for (i = 0; i < 16; ++i) {
+                    uint8 b = _RamRead(dmaAddr + l * 16 + i);
+                    char hbuf[4];
+                    sprintf(hbuf, "%02X ", b);
+                    _puts(hbuf);
+                }
+                _puts(" ");
+                // Print ASCII
+                for (i = 0; i < 16; ++i) {
+                    uint8 b = _RamRead(dmaAddr + l * 16 + i);
+                    _ccp_bdos(C_WRITE, (b >= 32 && b < 127) ? b : '.');
+                }
+                _puts("\r\n");
+                faddr += 16;
+            }
+            // Pause every 128 bytes
+            _puts("-- Press any key, ^C to quit --");
+            if (_ccp_bdos(C_READ, 0) == 3) // ^C
+                done = 1;
+            _puts("\r\n");
+        }
+        return 0;
+    }
+} // _ccp_dump
 
 // VOL command
 uint8 _ccp_vol(void) {
@@ -412,16 +625,74 @@ uint8 _ccp_vol(void) {
 // ?/Help command
 uint8 _ccp_hlp(void) {
     _puts("\r\nCCP Commands:\r\n");
-    _puts("\t? - Shows this list of commands\r\n");
-    _puts("\tCLS - Clears the screen\r\n");
-    _puts("\tDEL - Alias to ERA\r\n");
-    _puts("\tEXIT - Terminates RunCPM\r\n");
-    _puts("\tPAGE [<n>] - Sets the page size for TYPE\r\n");
-    _puts("\t    or disables paging if no parameter passed\r\n");
-    _puts("\tVOL [drive] - Shows the volume information\r\n");
-    _puts("\t    which comes from each volume's INFO.TXT");
+    _puts(" ?                  - Shows this list of commands\r\n");
+    _puts(" CLS                - Clears the screen\r\n");
+    _puts(" DEL [<patt>]       - Alias to ERA\r\n");
+    _puts(" DIR [<patt>]       - Lists file directory\r\n");
+    _puts(" DUMP <addr|file>   - Hex+ASCII dump of memory or file\r\n");
+    _puts("                      addr = 4 hex digits\r\n");
+    _puts(" ERA [<patt>]       - Erases files\r\n");
+    _puts(" EXIT               - Terminates RunCPM\r\n");
+    _puts(" LDIR [<patt>] [/C] - Lists file directory with sizes\r\n");
+    _puts("                      /C option includes 16 bit checksum\r\n");
+    _puts(" PAGE [<n>]         - Sets the paging size for TYPE and LDIR\r\n");
+    _puts("                      n = 0 to 255, 0 disables paging\r\n");
+    _puts(" REN <new>=<old>    - Renames files\r\n");
+    _puts(" SAVE <n> <file>    - Saves memory pages (256 bytes) to file\r\n");
+    _puts(" TYPE <file>        - Displays file contents\r\n");
+    _puts(" USER <n>           - Changes user area\r\n");
+    _puts(" VER                - Displays the current CCP version\r\n");
+    _puts(" VOL [<drv>]        - Shows the volume INFO.TXT information\r\n");
     return(FALSE);
 }
+
+// List of CCP commands
+static const Command Commands[] = {
+#ifdef Internals
+    // Standard CP/M commands
+    {"DIR", _ccp_dir},
+    {"ERA", _ccp_era},
+    {"TYPE", _ccp_type},
+    {"SAVE", _ccp_save},
+    {"REN", _ccp_ren},
+    {"USER", _ccp_user},
+    
+    // Extra CCP commands
+    {"CLS", _ccp_cls},
+    {"LDIR", _ccp_ldir},
+    {"DEL", _ccp_era},
+    {"EXIT", _ccp_exit},
+    {"PAGE", _ccp_page},
+    {"VER", _ccp_ver},
+    {"DUMP", _ccp_dump}, // <-- Added here
+#endif
+    {"VOL", _ccp_vol},
+    {"?", _ccp_hlp},
+    {NULL, NULL}  // Sentinel
+};
+
+// Gets the command pointer
+const Command* _ccp_cnum(void) {
+    uint8 command[9];
+    uint8 i = 0;
+
+    if (!_RamRead(CmdFCB)) {    // If a drive was set, then the command is external
+        while (i < 8 && _RamRead(CmdFCB + i + 1) != ' ') {
+            command[i] = _RamRead(CmdFCB + i + 1);
+            ++i;
+        }
+        command[i] = 0;
+        i = 0;
+        while (Commands[i].name) {
+            if (_ccp_strcmp((char *)command, Commands[i].name)) {
+                perr = defDMA + 2;
+                return &Commands[i];
+            }
+            ++i;
+        }
+    }
+    return NULL;  // External command
+} // _ccp_cnum
 
 // External (.COM) command
 uint8 _ccp_ext(void) {
@@ -685,6 +956,8 @@ void _ccp(void) {
 
             _RamWrite(inBuf, cmdLen);                   // Sets the buffer size to read the command line
             _ccp_readInput();
+            if (Status == STATUS_RETURN)
+                Status = STATUS_RUNNING;
             blen = _RamRead(inBuf + 1);                 // Obtains the number of bytes read
         }
 
@@ -780,95 +1053,25 @@ void _ccp(void) {
             }
             _ccp_nameToFCB(SecFCB);                     // Loads the next file parameter onto the secondary FCB
             
-            i = FALSE;                                  // Checks if the command is valid and executes
-            
-            switch (_ccp_cnum()) {
-#ifdef Internals
-                // Standard CP/M commands
-                case 0: {           // DIR
-                    _ccp_dir();
-                    break;
-                }
-                    
-                case 1: {           // ERA
-                    _ccp_era();
-                    break;
-                }
-                    
-                case 2: {           // TYPE
-                    _ccp_type();
-                    break;
-                }
-                    
-                case 3: {           // SAVE
-                    i = _ccp_save();
-                    break;
-                }
-                    
-                case 4: {           // REN
-                    _ccp_ren();
-                    break;
-                }
-                    
-                case 5: {           // USER
-                    i = _ccp_user();
-                    break;
-                }
-                    
-                // Extra CCP commands
-                case 6: {           // CLS
-                    _clrscr();
-                    break;
-                }
-                    
-                case 7: {           // DEL is an alias to ERA
-                    _ccp_era();
-                    break;
-                }
-                    
-                case 8: {           // EXIT
-                    _puts(	"Terminating RunCPM.\r\n");
-                    _puts(	"CPU Halted.\r\n");
-                    Status = 1;
-                    break;
-                }
-                    
-                case 9: {           // PAGE
-                    i = _ccp_page();
-                    break;
-                }
-#endif
-                    
-                case 10: {          // VOL
-                    i = _ccp_vol();
-                    break;
-                }
+            i = FALSE;  // Checks if the command is valid and executes
 
-                case 11: {          // HELP
-                    i = _ccp_hlp();
-                    break;
-                }
+const Command* cmd = _ccp_cnum();
+if (cmd) {
+    i = cmd->handler();
+} else {
+    i = _ccp_ext();
+}
 
-                // External commands
-                case 255: {         // It is an external command
-                    i = _ccp_ext();
-                    break;
-                }
-                    
-                default: {
-                    i = TRUE;
-                    break;
-                }
-            } // switch
-            cDrive = oDrive = curDrive; // Restore cDrive and oDrive
-            if (i)
-                _ccp_cmdError();
+cDrive = oDrive = curDrive; // Restore cDrive and oDrive
+if (i)
+    _ccp_cmdError();
         }
         blen = 0;
-        if ((Status == 1) || (Status == 2))
+        if ((Status == STATUS_EXIT) || (Status == STATUS_RESTART))
             break;
     }
     _puts("\r\n");
 } // _ccp
 
 #endif // ifndef CCP_H
+

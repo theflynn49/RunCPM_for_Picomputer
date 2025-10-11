@@ -9,7 +9,7 @@ This is a port of the latter to Bobricius' Picomputer, for which I had to add th
 The original work can be found at these locations : 
 <br>
 <br>    (c) Marcelo Dantas https://github.com/MockbaTheBorg/RunCPM
-<br>    (c) GUIDO LEHWALDER https://github.com/guidol70/RunCPM_RPi_Pico/tree/main/v6_7
+<br>    (c) GUIDO LEHWALDER https://github.com/guidol70/RunCPM_RPi_Pico/tree/main/v6_8
 <br>
 
 ## Some details

@@ -5,9 +5,9 @@ SdFat SD;
 
 // =========================================================================================
 // Define Board-Data
-// GP25 green onboard LED for Pico
+// GP25 green onboard LED
 // =========================================================================================
-#define LED 64  // GPIO64 = onboard LED for Pico-W
+#define LED 32  // GPIO32 = onboard LED for Pico-W
 #define LEDinv 0
 #define board_pico
 #define board_analog_io

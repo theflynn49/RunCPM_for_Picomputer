@@ -1,5 +1,6 @@
 
-# RunCPM for Picomputer - Z80 CP/M emulator for Bobricius' Picomputer.
+# RunCPM for Picomputer - Z80 CP/M emulator for Bobricius' Picomputer (unofficial release)
+
 ![RFP_boot](https://github.com/user-attachments/assets/86499f1d-f0c9-4c44-b322-6ef2adf786e5)
 ![RFP_colors](https://github.com/user-attachments/assets/e6ce85a9-83ce-4e48-a8d6-04590d47c073)
 
@@ -9,7 +10,7 @@ This is a port of the latter to Bobricius' Picomputer, for which I had to add th
 The original work can be found at these locations : 
 <br>
 <br>    (c) Marcelo Dantas https://github.com/MockbaTheBorg/RunCPM
-<br>    (c) GUIDO LEHWALDER https://github.com/guidol70/RunCPM_RPi_Pico/tree/main/v6_7
+<br>    (c) GUIDO LEHWALDER https://github.com/guidol70/RunCPM_RPi_Pico/tree/main/v6_8
 <br>
 
 ## Some details

@@ -28,8 +28,8 @@
 #define LogName "RunCPM.log"
 
 /* RunCPM version for the greeting header */
-#define VERSION	"6.7"
-#define VersionBCD 0x67
+#define VERSION	"6.8"
+#define VersionBCD 0x68
 
 /* Definition of which BDOS to use (not for Internal CCP, set to 60K CCPs by default) */
 // #define ABDOS				// Based on work by Pavel Zampach (https://www.chstercius.cz/runcpm/)
@@ -46,8 +46,8 @@
 /* Definition of the CCP memory information */
 //
 #ifdef CCP_INTERNAL
-#define CCPname		"INTERNAL v3.1"			// Will use the CCP from ccp.h
-#define VersionCCP	0x31					// 0x10 and above reserved for Internal CCP
+#define CCPname		"INTERNAL v3.2"			// Will use the CCP from ccp.h
+#define VersionCCP	0x32					// 0x10 and above reserved for Internal CCP
 #define BatchFCB	(tmpFCB + 48)
 #define CCPaddr		BDOSjmppage				// Internal CCP has size 0
 #endif
@@ -105,7 +105,7 @@
 	#define DBG
 #endif
 #ifdef ABDOS
-	#define ABD "ABDOS"
+	#define ABD " (ABDOS)"
 #else
 	#define ABD
 #endif
@@ -116,7 +116,6 @@
 #else
     #define CCPHEAD    "\r\nRunCPM [\e[1mv" VERSION "\e[0m] => CCP:[\e[1m" CCPname "\e[0m] => TPA:[\e[1m" STR(TPASIZE) "K" "\e[0m] "  DBG "\r\n"
 #endif 
-
 #define NOSLASH						// Will translate '/' to '_' on filenames to prevent directory errors
 
 //#define STREAMIO					// Will enable command line flags to read
@@ -142,6 +141,12 @@
 #define FALSE 0
 #define TRUE 1
 #endif
+
+/* Define Status types */
+#define STATUS_RUNNING 0
+#define STATUS_EXIT 1
+#define STATUS_RESTART 2
+#define STATUS_RETURN 3
 
 typedef signed char     int8;
 typedef signed short    int16;

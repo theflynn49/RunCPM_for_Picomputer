@@ -30,6 +30,10 @@ written 2025 by theflynn49 (no copyright on this file)
 #include <Adafruit_ST7789.h> // Hardware-specific library for ST7789
 #include "KMatrix.h"
 
+#define COLOR_FG0 2
+#define COLOR_FG1 9
+#define COLOR_BG 0
+
 #define BOUNCE_TIME 20000L
 
 #define ROW_SZ  6
@@ -77,7 +81,7 @@ static __uint8_t key_table [3]  [ROW_SZ * COL_SZ] = {
 // coding of this screen : <5-bits red><6-bits green><5-bits blue>
 static __uint16_t vt100_color_table [256] = {
     // colors 0-16 correspond to the ANSI and aixterm naming
-    0x0000,0xC800,0x0660,0xCE60,0x001D,0xC819,0x0679,0xE73C,0x7BEF,0xF800,0x07E0,0xFFE0,0x5AFF,0xF81F,0x07FF,0xFFFF,
+    0x0000,0xC800,0x0680,0xD680,0x001D,0xC819,0x0679,0xE73C,0x7BEF,0xF800,0x07E0,0xFFE0,0x5AFF,0xF81F,0x07FF,0xFFFF,
     // colors 16-231 are a 6x6x6 color cube
     0x0000,0x000B,0x0010,0x0015,0x001A,0x001F,0x02E0,0x02EB,0x02F0,0x02F5,0x02FA,0x02FF,0x0420,0x042B,0x0430,0x0435,
     0x043A,0x043F,0x0560,0x056B,0x0570,0x0575,0x057A,0x057F,0x06A0,0x06AB,0x06B0,0x06B5,0x06BA,0x06BF,0x07E0,0x07EB,
@@ -107,15 +111,15 @@ char key_buffer[32] ;
 int key_buffer_ndx = -1 ;
 int idbg = 0 ;
 char vt100_dbg[101] ;
-__uint16_t vt100_fg_color = ST77XX_GREY ;
-__uint16_t vt100_back_color = ST77XX_BLACK ;
+__uint16_t vt100_fg_color = vt100_color_table[COLOR_FG0];
+__uint16_t vt100_back_color = vt100_color_table[COLOR_BG] ;
 
 #define mask_all 0x40c3fe 
 
 void cursor_toggle(void){
   if ((timecur==0) || (timecur<time_us_64())) {
     if (cursoron) {
-      tft.drawLine(cursorX, cursorY, cursorX+5, cursorY, ST77XX_BLACK) ;
+      tft.drawLine(cursorX, cursorY, cursorX+5, cursorY, vt100_color_table[COLOR_BG]) ;
     } else {
       cursorX=tft.getCursorX() ;
       cursorY=tft.getCursorY()+7 ;
@@ -234,7 +238,7 @@ int getMatrix_n(int intr_process) {
 		 if (kb_state==1) 
 		 {
 			 if ((c0>='a')&&(c0<='z')) c=c0-0x60 ; else c=c0 ;
-		 }
+		 } else if ((kb_state==2) && (c0=='b')) c='\'' ; // shift-B gives a single quote
 	  } 
     }
     if ((last_c != -1) && (c == -1)) {
@@ -287,7 +291,7 @@ void vt100_state0(void){
 void vt100_clearscreen(int fblack) {
   tft.setCursor(318-6*7, 232) ;
   tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK) ;
-  tft.fillRect(tft.getCursorX(), tft.getCursorY(), 6*7, 8, ST77XX_BLACK) ; 
+  tft.fillRect(tft.getCursorX(), tft.getCursorY(), 6*7, 8, vt100_color_table[COLOR_BG]) ; 
   tft.print("<wait> ") ;
   tft.setTextColor(vt100_fg_color, vt100_back_color) ;
   if (fblack!=0)
@@ -325,7 +329,7 @@ extern void vt100_conout(char ch)
           tft.print((char)(ch & 0x7f)) ; 
           if (tft.getCursorY()>=232) // 240-8
           {
-            tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK) ;
+            tft.setTextColor(ST77XX_YELLOW, vt100_color_table[COLOR_BG]) ;
             tft.setCursor(318-6*7, 232) ;
             tft.print("<Space>") ;
             for(c=0;c!=' ' && c!=':' && c!='_'; c=_getch()) ;
@@ -368,13 +372,13 @@ extern void vt100_conout(char ch)
       } else if (ch=='m') {
         vt100_state0() ;
         switch(vt100_mode) {
-        case 0: vt100_fg_color = ST77XX_GREY ; 
-                vt100_back_color = ST77XX_BLACK ;
-                //tft.setTextColor(ST77XX_GREY, ST77XX_BLACK); 
+        case 0: vt100_fg_color = vt100_color_table[COLOR_FG0] ; 
+                vt100_back_color = vt100_color_table[COLOR_BG] ;
+                //tft.setTextColor(ST77XX_GREY, vt100_color_table[COLOR_BG]); 
                 break;  // light grey
-        case 1: vt100_fg_color = ST77XX_WHITE ; 
-                vt100_back_color = ST77XX_BLACK ;
-                //tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK ); 
+        case 1: vt100_fg_color = vt100_color_table[COLOR_FG1] ; 
+                vt100_back_color = vt100_color_table[COLOR_BG] ;
+                //tft.setTextColor(ST77XX_WHITE, vt100_color_table[COLOR_BG] ); 
                 break;
         case 38: if ((vt100_mode2==5) && (vt100_arg==3)) {
           vt100_fg_color = vt100_color_table[vt100_mode3 & 255] ; break ;
